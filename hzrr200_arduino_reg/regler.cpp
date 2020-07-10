@@ -81,7 +81,7 @@ uint8_t characteristic( uint8_t valve, float tv ) {
      return y;
 
 
-
+/*
   if(stat.summer[v]==1) {
     stat.trSoll[v]=0.0;
     dTemp = 0.0;
@@ -104,4 +104,4 @@ uint8_t characteristic( uint8_t valve, float tv ) {
   }
 }
 
-
+*/
