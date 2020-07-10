@@ -11,12 +11,15 @@ Regler Entwurf
 // Status data structure:
 // (partly: contains only varibles for the regulator) 
 typedef struct {
-
-}
-
+    // see function characteristic() for details:
+    float tRSet;        // set value of Ruecklauf temperature (Sollwert)
+} controllerStatus_t;
 
 typedef struct {
-
+    float tVorMeas;     // locally measured Vorlauf temperature
+    float tVorCentral;  // Vorlauf temperature received from master via network
+    float tVor;         // actually used Vorlauf temperature
+    controllerStatus_t cs[3];       // cs <-> "controller status" for controllers 0...3
 } status_t;
 status_t st;
 
@@ -26,13 +29,12 @@ status_t st;
 // Parameter data structure:
 // (partly: contains only varibles for the regulator) 
 typedef struct {
-    
-
+    float tv0,tv1;     // see function characteristic() for details
+    float tr0,tr1;     // see function characteristic() for details
 } controllerParameter_t;
 
 typedef struct {
     controllerParameter_t cp[3];       // cp <-> "controller parameter" for controllers 0...3
-
 } parameter_t;
 parameter_t par;
 
@@ -40,54 +42,45 @@ parameter_t par;
 
 
 /*
- verwendet Vorlauftemperatur stat.t_vor und berechnet
- anhand einer Kennlinie, ob die zugehoerige Ruecklauftemperatur
- stat.t_reck im Toleranzband pa.ttol liegt. 
- return: Richtung der Ventilbewegung:
-   V_AUF  wenn zu niedrig 
-   V_ZU   wenn zu hoch
-   V_HALT wenn im Toleranzband
- gesetzte Parameter in stat:
-   stat.trSoll   mit neuer Solltemperatur
-   stat.dtmot    mit neuer Motorlaufzeit
-   stat.dir      mit Richtung
- Falls ein Sensorfehler vorliegt erfolgt keine Berechnung;
- Die Ergebnisse werden alle auf 0 gesetzt.
+ verwendet Vorlauftemperatur tv und berechnet
+ anhand einer Kennlinie von (tv0,tr0) - (tv1,tr1) 
+ die zugehoerige Ruecklauftemperatur y
 
-tr1|- - - - - - - o-----
+tr1|- - - - - - - +-----
    |             /:
    |           /  :
-t_r|- - - - -+    :      t_r = t_rueck
+ y |- - - - -+    :
    |       / :    :
-tr0|----o/   :    :
+tr0|----+/   :    :
    |    :    :    :
    |    :    :    :
    +---------+----------
-      tv0  t_vor  tv1
+      tv0   tv   tv1
 */
-uint8_t kennlinie( uint8_t valve ) {
-  // valve e {1,2,3,4}
-  // return: Motor direction e {V_ZU, V_HALT, V_AUF}
-  uint8_t v = valve-1;     // v e {0,1,2,3} for valve {1,2,3,4}
-  parameter_t pa;
-  pa = par[v];             // point to parameter set of actual valve
-  float dTemp;              
+uint8_t characteristic( uint8_t valve, float tv ) {   
+    // input:
+    //      valve e {0,1,2}
+    //      tv Vorlauf temperature to be used
+    //      status_t st        (global)
+    //      parameter_t par    (global)
+    // return: 
+    //      set value of Ruecklauf temperature
+    //      set st.cs[valve].tRSet (global)
+    controllerParameter_t cp;     // for less typing work in the following :c)      
+    cp = par.cp[valve];           // controller parameters of actual valve
+    float y;
+      
+    // *** calculate Ruecklauftemperatur from Vorlauftemperatur using characteristic curve
+    if     ( tv <= cp.tv0 ) y = cp.tr0;                     // minimum tr0
+    else if( tv >= cp.tv1 ) y = cp.tr1;                     // maximum tr1
+    else {
+        float m = (cp.tr1 - cp.tr0) / (cp.tv1 - cp.tv0);    // slope of line (Steigung)
+        float y = m * ( tv - cs.tv0 ) + cs.tr0;             // Sollwert Ruecklauftemperatur
+        st.cs[valve].tRSet = y;                             // set result in status
+     }
+     return y;
 
-  // *** set time and direction in error case without calculating
-  if( stat.errV[v] ) {
-    stat.trSoll[v]    = -99.9;
-    stat.dtMot[v]     = 0.0;
-    stat.dir[v]       = V_HALT;
-    return V_HALT;
-  }
 
-  // *** calculate Ruecklauftemperatur from Vorlauftemperatur using Kennlinie
-  float m = (pa.tr1 - pa.tr0) / (pa.tv1 - pa.tv0);    // Steigung
-  float y = m * ( stat.tvr[v] - pa.tv0 ) + pa.tr0;     // Sollwert Ruecklauftemperatur
-  if( y < pa.tr0 ) y = pa.tr0;                        // limit to minimum tr0
-  if( y > pa.tr1 ) y = pa.tr1;                        // limit to maximum tr1
-  stat.trSoll[v] = y;                                 // set result in status
-  dTemp = stat.tr[v] - y;                             // temperature difference
 
   if(stat.summer[v]==1) {
     stat.trSoll[v]=0.0;
