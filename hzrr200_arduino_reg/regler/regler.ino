@@ -11,14 +11,16 @@ Regler Entwurf
 // Status data structure:
 // (partly: contains only varibles for the regulator) 
 typedef struct {
+    float tRueck;       // locally measured Ruecklauf temperature
+    float tZimm;        // locally measured room temperature (typically used for controller 1)
+    float tVorMeas;     // locally measured Vorlauf temperature
+    float tVorCentral;  // Vorlauf temperature received from master via network
+    float tVor;         // actually used Vorlauf temperature
     // see function characteristic() for details:
     float tRSet;        // set value of Ruecklauf temperature (Sollwert)
 } controllerStatus_t;
 
 typedef struct {
-    float tVorMeas;     // locally measured Vorlauf temperature
-    float tVorCentral;  // Vorlauf temperature received from master via network
-    float tVor;         // actually used Vorlauf temperature
     controllerStatus_t cs[3];       // cs <-> "controller status" for controllers 0...3
 } status_t;
 status_t st;
@@ -39,6 +41,22 @@ typedef struct {
 parameter_t par;
 
 
+
+
+/* ------------------------
+    calculate temperature 
+    Ruecklauf from Vorlauf
+    -----------------------
+*/    
+void init_characteristic(void) {
+    byte i;
+    for(i=0;i<3;i++){
+        par.cp[i].tv0 = 40.0;   // degC; min. Vorlauf
+        par.cp[i].tv1 = 75.0;   // degC; max. Vorlauf
+        par.cp[i].tr0 = 32.0;   // degC; min. Ruecklauf
+        par.cp[i].tr1 = 46.0;   // degC; max. Ruecklauf
+    }
+}
 
 
 /*
@@ -68,17 +86,56 @@ uint8_t characteristic( uint8_t valve, float tv ) {
     //      set st.cs[valve].tRSet (global)
     controllerParameter_t cp;     // for less typing work in the following :c)      
     cp = par.cp[valve];           // controller parameters of actual valve
-    float y;
+    float m,y;
       
     // *** calculate Ruecklauftemperatur from Vorlauftemperatur using characteristic curve
     if     ( tv <= cp.tv0 ) y = cp.tr0;                     // minimum tr0
     else if( tv >= cp.tv1 ) y = cp.tr1;                     // maximum tr1
     else {
-        float m = (cp.tr1 - cp.tr0) / (cp.tv1 - cp.tv0);    // slope of line (Steigung)
-        float y = m * ( tv - cs.tv0 ) + cs.tr0;             // Sollwert Ruecklauftemperatur
+        m = (cp.tr1 - cp.tr0) / (cp.tv1 - cp.tv0);          // slope of line (Steigung)
+        y = m * ( tv - cp.tv0 ) + cp.tr0;                   // Sollwert Ruecklauftemperatur
         st.cs[valve].tRSet = y;                             // set result in status
      }
      return y;
+}
+
+
+
+// ================================================
+// End functions
+// ================================================
+
+// TEST functions above
+void test_regulator(void) {
+    float tempVL[]={30.0, 40.0, 57.5, 75.0, 80.0};  // test temperatures for Vorlauf
+    byte reg,i;
+    float tr;
+    Serial.println("test characteristic() function");
+    init_characteristic();
+    for(reg=0;reg<3;reg++){
+        Serial.println("Vorl. Rueckl.");
+        for(i=0;i<5;i++){
+            tr=characteristic( reg, tempVL[i] );
+            Serial.print(tempVL[i]);
+            Serial.print("  ");
+            Serial.println(tr);
+        };
+    };
+};
+
+
+void setup( void ) {
+    Serial.begin(9600);
+    test_regulator();
+}
+
+void loop(void){
+
+}
+
+
+
+
 
 
 /*
