@@ -11,16 +11,14 @@ Regler Entwurf
 // Status data structure:
 // (partly: contains only varibles for the regulator) 
 typedef struct {
-    float tRueck;       // locally measured Ruecklauf temperature
-    float tZimm;        // locally measured room temperature (typically used for controller 1)
-    float tVorMeas;     // locally measured Vorlauf temperature
-    float tVorCentral;  // Vorlauf temperature received from master via network
-    float tVor;         // actually used Vorlauf temperature
     // see function characteristic() for details:
     float tRSet;        // set value of Ruecklauf temperature (Sollwert)
 } controllerStatus_t;
 
 typedef struct {
+    float tVorMeas;     // locally measured Vorlauf temperature
+    float tVorCentral;  // Vorlauf temperature received from master via network
+    float tVor;         // actually used Vorlauf temperature
     controllerStatus_t cs[3];       // cs <-> "controller status" for controllers 0...3
 } status_t;
 status_t st;
@@ -92,8 +90,8 @@ uint8_t characteristic( uint8_t valve, float tv ) {
     if     ( tv <= cp.tv0 ) y = cp.tr0;                     // minimum tr0
     else if( tv >= cp.tv1 ) y = cp.tr1;                     // maximum tr1
     else {
-        m = (cp.tr1 - cp.tr0) / (cp.tv1 - cp.tv0);          // slope of line (Steigung)
-        y = m * ( tv - cp.tv0 ) + cp.tr0;                   // Sollwert Ruecklauftemperatur
+        m = (cp.tr1 - cp.tr0) / (cp.tv1 - cp.tv0);    // slope of line (Steigung)
+        y = m * ( tv - cp.tv0 ) + cp.tr0;             // Sollwert Ruecklauftemperatur
         st.cs[valve].tRSet = y;                             // set result in status
      }
      return y;
@@ -107,16 +105,19 @@ uint8_t characteristic( uint8_t valve, float tv ) {
 
 // TEST functions above
 void test_regulator(void) {
-    float tempVL[]={30.0, 40.0, 57.5, 75.0, 80.0};  // test temperatures for Vorlauf
+    float tempVL[]={30.0, 40.0, 52.5, 75.0, 80.0};  // test temperatures for Vorlauf
     byte reg,i;
     float tr;
-    Serial.println("test characteristic() function");
+    
     init_characteristic();
     for(reg=0;reg<3;reg++){
-        Serial.println("Vorl. Rueckl.");
+        Serial.print("Vorl. Rueckl. Regler");
+        Serial.println(reg);
         for(i=0;i<5;i++){
             tr=characteristic( reg, tempVL[i] );
             Serial.print(tempVL[i]);
+            Serial.print("  ");
+            Serial.print(tr);
             Serial.print("  ");
             Serial.println(tr);
         };
