@@ -12,7 +12,7 @@ Regler Entwurf
 // (partly: contains only varibles for the regulator) 
 typedef struct {
     // see function characteristic() for details:
-    float tRSet;        // set value of Ruecklauf temperature (Sollwert)
+    float tRlSet;        // set value of Ruecklauf temperature (Sollwert)
 } controllerStatus_t;
 
 typedef struct {
@@ -92,7 +92,7 @@ uint8_t characteristic( uint8_t valve, float tv ) {
     else {
         m = (cp.tr1 - cp.tr0) / (cp.tv1 - cp.tv0);    // slope of line (Steigung)
         y = m * ( tv - cp.tv0 ) + cp.tr0;             // Sollwert Ruecklauftemperatur
-        st.cs[valve].tRSet = y;                             // set result in status
+        st.cs[valve].tRlSet = y;                             // set result in status
      }
      return y;
 }

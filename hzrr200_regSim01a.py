@@ -7,11 +7,23 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 
+# *** constants
+VALVE_OPEN = 1
+VALVE_CLOSE= 2
+
+# for test
+motorPos = 30.0
+
+
 # *** status variables are changed during operation
-# NOTE: values have to be initialized for formal reasons
+# NOTE: values have to be initialized for formal python-reasons
 #       they are set in a separate init function
 class St:         # Status variables
-    firstLoop =1    # 1 if first loop is in progress
+    # *** common to all regulators
+    
+    # *** for each regulator
+    tRlSet    =0    # set value for ruecklauf regulator
+    firstLoop =0    # 1 if first loop is in progress
     tOld      =0    # sec; previous timestamp initial value
     dt        =0    # sec; timeslice, initial value
     tempVlLP  =0    # Temperature Vorlauf low-pass
@@ -21,13 +33,27 @@ class St:         # Status variables
     motPauseEnd =0  # sec; end-time of valve-motor inactive
 # *** parameters are stored in EEPROM; may be changed via network
 class Par:                # Parameter variables, in EEPROM
+    # *** common to all regulators:
     fMeas = 0.2           # measurments per second
+    # Kennlinie, common for all regulators
+    # see diagram at function characteristic()
+    tv0   = 40.0
+    tv1   = 75.0
+    tr0   = 32.0
+    tr1   = 46.0
+    # *** for each regulator:
+    mode  = 1             # 0:inactive; 1:ruecklauf regulator; 2:Roomtemp.Reg (for reg.1)
     tauTVL= 10.0*60.0     # sec; tau to reach 1/e amplitude of VL with low-pass filter
     tauTRL= 30.0*60.0     # sec; tau to reach 1/e amplitude of RL with low-pass filter
     mUp   =  7.0          # degC/sec; Steigung fuer Aufwärtsflanke
     mDn   = -8.0          # degC/sec; Steigung fuer Abwärtsflanke
     offtime  = 45.0*60.0  # sec; to stop motor after strong slope
-    motDelay  =10*60    # sec; pause motor after steep slope
+    motDelay  =10*60      # sec; pause motor after steep slope
+    dTempMin  = 1         # K; temperature difference to allowed minimum tolerance
+    dTempMax  = 1         # K; temperature difference to allowed maximum tolerance
+    secPerK   = 0.05      # sec/K; seconds of motor on per Kelvin difference
+    tMotMin   = 0.1       # sec;  minimum motor on-time to have an action
+
     
 def init_var_status():
     St.firstLoop = 1;
@@ -39,20 +65,83 @@ def init_var_status():
     St.mRL      = 0.0         # degC/sec; start value
     motPauseEnd = time.time() # sec; End of pause set to now
 
+
+'''
+ verwendet Vorlauftemperatur tv und berechnet
+ anhand einer Kennlinie von (tv0,tr0) - (tv1,tr1) 
+ die zugehoerige Ruecklauftemperatur y
+
+tr1|- - - - - - - +-----
+   |             /:
+   |           /  :
+ y |- - - - -+    :
+   |       / :    :
+tr0|----+/   :    :
+   |    :    :    :
+   |    :    :    :
+   +---------+----------
+      tv0   tv   tv1
+*/
+uint8_t characteristic( uint8_t valve, float tv ) {   
+    // input:
+    //      valve e {0,1,2}
+    //      tv Vorlauf temperature to be used
+    //      status_t st        (global)
+    //      parameter_t par    (global)
+    // return: 
+    //      set value of Ruecklauf temperature
+    //      set st.cs[valve].tRSet (global)
+    controllerParameter_t cp;     // for less typing work in the following :c)      
+    cp = par.cp[valve];           // controller parameters of actual valve
+    float m,y;
+      
+    // *** calculate Ruecklauftemperatur from Vorlauftemperatur using characteristic curve
+    if     ( tv <= cp.tv0 ) y = cp.tr0;                     // minimum tr0
+    else if( tv >= cp.tv1 ) y = cp.tr1;                     // maximum tr1
+    else {
+        m = (cp.tr1 - cp.tr0) / (cp.tv1 - cp.tv0);    // slope of line (Steigung)
+        y = m * ( tv - cp.tv0 ) + cp.tr0;             // Sollwert Ruecklauftemperatur
+        st.cs[valve].tRSet = y;                             // set result in status
+     }
+     return y;
+}
+'''
+
+def characteristic( valve, tv ):
+    # calculate set value for Ruecklauf from Vorlauf tv
+    # see above
+    ''' NOTE: only one regulator - St. and Par. variables are indexed !!! '''
+    if tv <= Par.tv0 :
+        y = Par.tv0
+    elif tv >= Par.tv1 :
+        y = Par.tv1
+    else:
+        m = (Par.tr1 - Par.tr0) / (Par.tv1 - Par.tv0)
+        y = m * ( tv - Par.tv0 ) + Par.tr0
+        St.tempRlSet = y
+    return y
+
+
 def regler( tn,tempVl,tempRl ):
     # tn       sec;      actual time
     # tempVl   degC;     Vorlauf temperature
     # tempRl   degC;     Rücklauf temperature
     # Rücklauf; fast lowpass filter
-
+    global motorPos
+    if Par.mode == 0:
+        return                   # inactive - do nothing
     if St.firstLoop > 0:
         St.tempVlLP = tempVl     # init low-pass filter Vorlauf
         St.tempRlLP = tempRl     # init low-pass filter Ruecklauf
+        St.tempRlLP2= tempRl     # init low-pass filter 2. order Ruecklauf
         St.mRl = 0.0             # init slope Ruecklauf
         m2high = 0.0             # init slope Ruecklauf too high
         m2low  = 0.0             # init slope Ruecklauf too low
         mPause = tn-1            # endtime for slope-pause
         St.tempRLOld = tempRl
+        dTemp=0.0
+        diff=0.0
+        motorPos=25.0
     else:
         #print(".")
         # *** claculate filter factor for low-pass of VL and RL
@@ -96,14 +185,25 @@ def regler( tn,tempVl,tempRl ):
         # TODO parameter in Par for max. idle time of motor
         # TODO switch motor on only for a limited time <-- other parameter
         
-        # *** main regulator 
-        # always use mean temperature of RL (not current temp.)
-        # do nothing if motor delay is active
-        pass
-
+        # *** main regulator
+        tempSet = characteristic( 0, St.tempVlLP)       # 0 is a dummy, only one regualtor for test
+        dTemp = tempSet - St.tempRlLP
+        if   dTemp < St.tempRlLP - Par.dTempMin:
+            diff = dTemp - Par.dTempMin    # K; difference below lower tolerance
+            St.tMot = - Par.secPerK * diff + Par.tMotMin   # motor on-time; diff is negative
+            St.tDir = VALVE_OPEN
+            motorPos -= St.tMot
+        elif dTemp > St.tempRlLP + Par.dTempMax:
+            diff = dTemp - Par.dTempMax    # K; difference over upper tolerance
+            St.tMot = Par.secPerK * diff + Par.tMotMin   # motor on-time; diff is negative
+            St.tDir = VALVE_CLOSE
+            motorPos += St.tMot
+        else:
+            dTemp=0.0
+            diff=0.0
     # *** return values for plotting
     St.firstLoop=0
-    return (St.tempRlLP, St.tempRlLP2, St.mRL, m2high, m2low, mPause)
+    return (St.tempRlLP, St.tempRlLP2, St.mRL, m2high, m2low, mPause,dTemp,diff,motorPos)
 
 
 if __name__ == "__main__":
@@ -117,11 +217,11 @@ if __name__ == "__main__":
     
     # *** generate a temperature curve
     # TODO alternatively read it from file
-    def temp_verlauf( tvon, tbis, dt, T, a0 ):
+    def temp_verlauf( tvon, tbis, dt, T, a0, offset ):
         # tvon, tbis in Minuten
         t = np.arange( tvon, tbis, dt )
         tr = 2.0*np.pi * t / T
-        rl = a0 * np.sin(tr)
+        rl = a0 * np.sin(tr) + offset
         return (t,rl)
 
 
@@ -131,7 +231,8 @@ if __name__ == "__main__":
     dt         = 1.0/Par.fMeas    # sec;  sample rate
     TMinutes   = 60*60     # sec;  Periode einer Schwingung
     a0         = 5.0    # degC; Amplitude in Grad Celsius
-    (t,tempRL)=temp_verlauf(vonSeconds,bisSeconds,dt,TMinutes,a0)
+    offset     = 40.0
+    (t,tempRL)=temp_verlauf(vonSeconds,bisSeconds,dt,TMinutes,a0,offset)
     tm=t/60.0
     
     rlLP=[]             # degC;  temperature Rücklauf after low-pass
@@ -140,11 +241,14 @@ if __name__ == "__main__":
     mHi =[]             # too high positive RL slope detected
     mLo =[]             # too low negative RL slope detected
     motPause=[]         # 1 if valve-motor shall not work
+    dTemp=[]            # regulator difference
+    diff=[]             # difference
+    motPosA=[]          # relative motor position
     
     St.firstLoop=1      # indicate first loop to all iterations
     for i in range (len(t)):
     #for i in range (5):
-        (tempRlLP,tempRlLP2,m,a,b,mp) = regler(t[i],60.0,tempRL[i])
+        (tempRlLP,tempRlLP2,m,a,b,mp,dt,d,mPos) = regler(t[i],60.0,tempRL[i])
         St.firstloop=0
         # store results for later plotting
         rlLP.append(tempRlLP)
@@ -153,6 +257,9 @@ if __name__ == "__main__":
         mHi.append(a)   # only used for sim-plot
         mLo.append(b)   # only used for sim-plot
         motPause.append(mp) # motor pause active
+        dTemp.append(dt)
+        diff.append(d)
+        motPosA.append(mPos)
         
     # plot results    
     plt.plot(tm,tempRL,label="tempRL")
@@ -162,69 +269,12 @@ if __name__ == "__main__":
     plt.plot(tm,mHi,label="mHi")
     plt.plot(tm,mLo,label="mLo")
     plt.plot(tm,motPause,":",label="motPause")
+    plt.plot(tm,dTemp,".-",label="dTemp")
+    plt.plot(tm,diff,".-",label="diff")
+    plt.plot(tm,motPosA,".-",label="motPos")
     plt.grid()
     plt.xlabel("Minutes")
     plt.legend()
     plt.show()
         
 
-
-    '''
-    m = [rl[i]-rl[i-1] for i in range(1,len(t)) ]
-    m.insert(0,0)
-    print(m)
-    mUp = [ 1 if m[i] > Par.mUp else 0 for i in range(len(m)) ]
-    mDn = [-1 if m[i] < Par.mDn else 0 for i in range(len(m)) ]
-
-    delayUp = []
-    cnt=0
-    for x in mUp:
-        if x != 0:
-            delayUp.append(.9)
-            cnt = Par.offtime
-        else:
-            if cnt > 0:
-                cnt-=1
-                delayUp.append(.9)
-            else:
-                delayUp.append(0)
-
-    delayDn = []
-    cnt=0
-    for x in mDn:
-        if x != 0:
-            delayDn.append(-.9)
-            cnt = Par.offtime
-        else:
-            if cnt > 0:
-                cnt-=1
-                delayDn.append(-.9)
-            else:
-                delayDn.append(0)
-
-
-
-    print(max(m),min(m))
-    print(mUp)
-    rlMean = np.zeros(len(m),float)
-    rlMean[0] = rl[0]
-    rlMean = [rlMean[i-1]*(1-Par.fakt) + rl[i]*Par.fakt for i in range(1,len(rl))]
-    rlMean.insert(0,rl[0])
-    rlMeanA = np.array(rlMean )
-    print(rlMeanA)
-
-    ma = np.array(m)
-    plt.plot(t,rl)
-    plt.plot(t,ma)
-    plt.plot(t,mUp)
-    plt.plot(t,mDn)
-    plt.plot(t,rlMeanA)
-    plt.plot(t,delayUp,":")
-    plt.plot(t,delayDn,":")
-    plt.show()
-'''
-    
-    
-    
-
-        
