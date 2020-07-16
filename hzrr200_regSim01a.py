@@ -31,6 +31,7 @@ class St:         # Status variables
     tempRlLP2 =0    # Temp.Rücklauf, low-pass 2.order
     mRL       =0    # degC/sec; RL temperature slope
     motPauseEnd =0  # sec; end-time of valve-motor inactive
+    tMot      =0    # sec; time motor shall bemoved
 # *** parameters are stored in EEPROM; may be changed via network
 class Par:                # Parameter variables, in EEPROM
     # *** common to all regulators:
@@ -51,7 +52,7 @@ class Par:                # Parameter variables, in EEPROM
     motDelay  =10*60      # sec; pause motor after steep slope
     dTempMin  = 1         # K; temperature difference to allowed minimum tolerance
     dTempMax  = 1         # K; temperature difference to allowed maximum tolerance
-    secPerK   = 0.05      # sec/K; seconds of motor on per Kelvin difference
+    secPerK   = 0.2       # sec/K; seconds of motor on per Kelvin difference
     tMotMin   = 0.1       # sec;  minimum motor on-time to have an action
 
     
@@ -65,7 +66,19 @@ def init_var_status():
     St.mRL      = 0.0         # degC/sec; start value
     motPauseEnd = time.time() # sec; End of pause set to now
 
-
+def init_motors():
+    for i in range(3):
+        
+        pass
+        # set status variables to close
+        # all ACTIVE valves until i-max is reached
+    # wait for all valves being closed
+    for i in range(3):
+        pass
+        # set status variables to open
+        # all ACTIVE valves for 2 seconds
+    
+    
 '''
  verwendet Vorlauftemperatur tv und berechnet
  anhand einer Kennlinie von (tv0,tr0) - (tv1,tr1) 
@@ -183,17 +196,18 @@ def regler( tn,tempVl,tempRl ):
             
         # *** activate motor if too long disabled
         # TODO parameter in Par for max. idle time of motor
-        # TODO switch motor on only for a limited time <-- other parameter
+        # TODO switch motor on only a limited time <-- other parameter
         
         # *** main regulator
-        tempSet = characteristic( 0, St.tempVlLP)       # 0 is a dummy, only one regualtor for test
-        dTemp = tempSet - St.tempRlLP
-        if   dTemp < St.tempRlLP - Par.dTempMin:
-            diff = dTemp - Par.dTempMin    # K; difference below lower tolerance
-            St.tMot = - Par.secPerK * diff + Par.tMotMin   # motor on-time; diff is negative
+        tempSoll = characteristic( 0, St.tempVlLP)       # 0 is a dummy, only one regualtor for test
+        tempIst  = St.tempRlLP
+        dTemp = tempSoll - tempIst
+        if   dTemp < - Par.dTempMin:
+            diff = -dTemp - Par.dTempMin    # K; difference below lower tolerance
+            St.tMot = Par.secPerK * diff + Par.tMotMin   # motor on-time; diff is negative
             St.tDir = VALVE_OPEN
             motorPos -= St.tMot
-        elif dTemp > St.tempRlLP + Par.dTempMax:
+        elif dTemp > + Par.dTempMax:
             diff = dTemp - Par.dTempMax    # K; difference over upper tolerance
             St.tMot = Par.secPerK * diff + Par.tMotMin   # motor on-time; diff is negative
             St.tDir = VALVE_CLOSE
@@ -201,9 +215,12 @@ def regler( tn,tempVl,tempRl ):
         else:
             dTemp=0.0
             diff=0.0
+            St.tMot=0.0
+            
     # *** return values for plotting
     St.firstLoop=0
-    return (St.tempRlLP, St.tempRlLP2, St.mRL, m2high, m2low, mPause,dTemp,diff,motorPos)
+    return (St.tempRlLP, St.tempRlLP2, St.mRL, m2high, m2low,
+            mPause,dTemp,diff,St.tMot,motorPos)
 
 
 if __name__ == "__main__":
@@ -244,11 +261,12 @@ if __name__ == "__main__":
     dTemp=[]            # regulator difference
     diff=[]             # difference
     motPosA=[]          # relative motor position
+    tMotA=[]
     
     St.firstLoop=1      # indicate first loop to all iterations
     for i in range (len(t)):
     #for i in range (5):
-        (tempRlLP,tempRlLP2,m,a,b,mp,dt,d,mPos) = regler(t[i],60.0,tempRL[i])
+        (tempRlLP,tempRlLP2,m,a,b,mp,dt,d,tMot,mPos) = regler(t[i],60.0,tempRL[i])
         St.firstloop=0
         # store results for later plotting
         rlLP.append(tempRlLP)
@@ -260,18 +278,20 @@ if __name__ == "__main__":
         dTemp.append(dt)
         diff.append(d)
         motPosA.append(mPos)
-        
+        mpa=np.array(motPosA)
+        tMotA.append(tMot)
     # plot results    
-    plt.plot(tm,tempRL,label="tempRL")
-    plt.plot(tm,rlLP,label="rlLP")
-    plt.plot(tm,rlLP2,label="rlLP2")
+    #plt.plot(tm,tempRL,label="tempRL")
+    #plt.plot(tm,rlLP,label="rlLP")
+    #plt.plot(tm,rlLP2,label="rlLP2")
     plt.plot(tm,mRL,":",label="mRL")
     plt.plot(tm,mHi,label="mHi")
     plt.plot(tm,mLo,label="mLo")
     plt.plot(tm,motPause,":",label="motPause")
     plt.plot(tm,dTemp,".-",label="dTemp")
     plt.plot(tm,diff,".-",label="diff")
-    plt.plot(tm,motPosA,".-",label="motPos")
+    plt.plot(tm,mpa/10,"-",label="motPos")
+    plt.plot(tm,tMotA,"-",label="tMotA")
     plt.grid()
     plt.xlabel("Minutes")
     plt.legend()
